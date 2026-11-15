@@ -1,1 +1,39 @@
-# Router-Serve\n\nServe routing decisions: scalar score in, cheapest sufficient expert out, usage tracked.\n\n## What it does\n\nRoutingService registers experts with a capacity and a cost. Each serve\ncall takes a scalar score, picks the cheapest expert whose capacity\ncovers it, records per-expert usage and latency, and counts rejections\nwhen no expert fits.\n\n    from router_serve import RoutingService\n\n    service = RoutingService()\n    service.add_expert("small", capacity=1.0, cost=1.0)\n    service.add_expert("large", capacity=10.0, cost=5.0)\n    out = service.serve("req-1", score=0.5)\n    print(out["expert"], out["latency_ms"])\n\n## API\n\n- RoutingService.add_expert / route / serve / usage / stats\n- ServeRegistry - the generic base registry (unchanged from DNA-Serve)\n\n## Honest results and limitations\n\n- The score is whatever number you pass in; this service does not compute\n  complexity or any other signal (see the Router repos for scorers).\n- Decisions are greedy cheapest-sufficient; no load balancing or\n  backpressure.\n- Single-threaded, in-process; usage counts are not thread-safe.\n\n## Status\n\nPart of the kapildhinwa2010-dev toolkit experiments. CI and CodeQL run on\nevery push to main. License: MIT.\n
+# Router-Serve
+
+[![CI](https://github.com/kapildhinwa2010-dev/Router-Serve/actions/workflows/ci.yml/badge.svg)](https://github.com/kapildhinwa2010-dev/Router-Serve/actions/workflows/ci.yml)
+[![CodeQL](https://github.com/kapildhinwa2010-dev/Router-Serve/actions/workflows/codeql.yml/badge.svg)](https://github.com/kapildhinwa2010-dev/Router-Serve/actions/workflows/codeql.yml)
+
+Serve routing decisions: scalar score in, cheapest sufficient expert out, usage tracked.
+
+## What it does
+
+RoutingService registers experts with a capacity and a cost. Each serve
+call takes a scalar score, picks the cheapest expert whose capacity
+covers it, records per-expert usage and latency, and counts rejections
+when no expert fits.
+
+    from router_serve import RoutingService
+
+    service = RoutingService()
+    service.add_expert("small", capacity=1.0, cost=1.0)
+    service.add_expert("large", capacity=10.0, cost=5.0)
+    out = service.serve("req-1", score=0.5)
+    print(out["expert"], out["latency_ms"])
+
+## API
+
+- RoutingService.add_expert / route / serve / usage / stats
+- ServeRegistry - the generic base registry (unchanged from DNA-Serve)
+
+## Honest results and limitations
+
+- The score is whatever number you pass in; this service does not compute
+  complexity or any other signal (see the Router repos for scorers).
+- Decisions are greedy cheapest-sufficient; no load balancing or
+  backpressure.
+- Single-threaded, in-process; usage counts are not thread-safe.
+
+## Status
+
+Part of the kapildhinwa2010-dev toolkit experiments. CI and CodeQL run on
+every push to main. License: MIT.
