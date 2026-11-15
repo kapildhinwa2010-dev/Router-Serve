@@ -1,1 +1,151 @@
-# Router-Serve - Serve routing decisions: score in, expert out, usage tracked\n# Part of the Kapildhinwa2010-dev Toolkit.\n"""ServeNet - model registry and request envelopes (service layer).\n\nLineage: the *-Serve toolkit repos. Models are registered with metadata and\nversion; requests travel as validated envelopes; responses carry latency and\npayload size so the registry can be monitored without a web framework.\n"""\n\nfrom __future__ import annotations\n\nimport time\n\nimport numpy as np\n\n__all__ = ["Envelope", "ModelRecord", "ServeRegistry"]\n\n\nclass Envelope:\n    """Validated request payload."""\n\n    def __init__(self, request_id: str, payload: np.ndarray) -> None:\n        if not request_id:\n            raise ValueError("request_id must be non-empty")\n        payload = np.asarray(payload, dtype=np.float64)\n        if payload.size == 0:\n            raise ValueError("payload must be non-empty")\n        self.request_id = request_id\n        self.payload = payload\n\n    def nbytes(self) -> int:\n        return int(self.payload.nbytes)\n\n\nclass ModelRecord:\n    """A registered model with version and callable."""\n\n    def __init__(self, name: str, version: str, fn) -> None:\n        if not name or not version:\n            raise ValueError("name and version must be non-empty")\n        if not callable(fn):\n            raise TypeError("fn must be callable")\n        self.name = name\n        self.version = version\n        self.fn = fn\n        self.calls = 0\n\n    def invoke(self, payload: np.ndarray) -> np.ndarray:\n        result = self.fn(payload)\n        self.calls += 1\n        return np.asarray(result)\n\n\nclass ServeRegistry:\n    """Registry with versioned lookup and served-request statistics."""\n\n    def __init__(self) -> None:\n        self._models: dict = {}\n        self.stats = {"requests": 0, "total_latency_ms": 0.0, "total_bytes": 0}\n\n    def register(self, name: str, version: str, fn) -> ModelRecord:\n        record = ModelRecord(name, version, fn)\n        self._models[(name, version)] = record\n        return record\n\n    def get(self, name: str, version: str = "latest") -> ModelRecord:\n        if version == "latest":\n            candidates = [r for (n, _) in self._models if n == name]\n            if not candidates:\n                raise KeyError("unknown model: {}".format(name))\n            version = max(v for (n, v) in self._models if n == name)\n        key = (name, version)\n        if key not in self._models:\n            raise KeyError("unknown model: {}@{}".format(name, version))\n        return self._models[key]\n\n    def serve(self, name: str, envelope: Envelope, version: str = "latest") -> dict:\n        model = self.get(name, version)\n        start = time.perf_counter()\n        result = model.invoke(envelope.payload)\n        latency_ms = (time.perf_counter() - start) * 1000.0\n        self.stats["requests"] += 1\n        self.stats["total_latency_ms"] += latency_ms\n        self.stats["total_bytes"] += envelope.nbytes()\n        return {\n            "request_id": envelope.request_id,\n            "model": model.name,\n            "version": model.version,\n            "shape": tuple(int(d) for d in result.shape),\n            "latency_ms": latency_ms,\n        }\n\n    def summary(self) -> dict:\n        requests = self.stats["requests"]\n        return {\n            "models": len(self._models),\n            "requests": requests,\n            "avg_latency_ms": (self.stats["total_latency_ms"] / requests) if requests else 0.0,\n            "total_bytes": self.stats["total_bytes"],\n        }\n\n__all__.append("RoutingService")\n\n\nclass RoutingService:\n    """Serve routing decisions: pick the cheapest expert whose capacity fits.\n\n    Experts declare a capacity and a cost. Each serve call takes a scalar\n    score, picks the cheapest sufficient expert and records per-expert\n    usage plus latency.\n    """\n\n    def __init__(self) -> None:\n        self._experts = []\n        self.stats = {"routed": 0, "rejected": 0}\n\n    def add_expert(self, name: str, capacity: float, cost: float = 1.0) -> None:\n        if not name:\n            raise ValueError("name must be non-empty")\n        if capacity <= 0 or cost < 0:\n            raise ValueError("capacity must be > 0 and cost >= 0")\n        self._experts.append({"name": name, "capacity": float(capacity),\n                              "cost": float(cost), "calls": 0})\n\n    def route(self, score: float) -> str:\n        """Cheapest expert with capacity >= score; raises ValueError if none."""\n        sufficient = [e for e in self._experts if e["capacity"] >= score]\n        if not sufficient:\n            raise ValueError("no expert can handle score {}".format(score))\n        return min(sufficient, key=lambda e: (e["cost"], e["capacity"]))["name"]\n\n    def serve(self, request_id: str, score: float) -> dict:\n        """Serve one routing decision; returns expert and latency."""\n        if not request_id:\n            raise ValueError("request_id must be non-empty")\n        start = time.perf_counter()\n        self.stats["routed"] += 1\n        try:\n            name = self.route(score)\n        except ValueError:\n            self.stats["rejected"] += 1\n            raise\n        for e in self._experts:\n            if e["name"] == name:\n                e["calls"] += 1\n        return {"request_id": request_id, "expert": name,\n                "latency_ms": (time.perf_counter() - start) * 1000.0}\n\n    def usage(self) -> dict:\n        return {e["name"]: e["calls"] for e in self._experts}\n\n
+# Router-Serve - Serve routing decisions: score in, expert out, usage tracked
+# Part of the Kapildhinwa2010-dev Toolkit.
+"""ServeNet - model registry and request envelopes (service layer).
+
+Lineage: the *-Serve toolkit repos. Models are registered with metadata and
+version; requests travel as validated envelopes; responses carry latency and
+payload size so the registry can be monitored without a web framework.
+"""
+
+from __future__ import annotations
+
+import time
+
+import numpy as np
+
+__all__ = ["Envelope", "ModelRecord", "ServeRegistry"]
+
+
+class Envelope:
+    """Validated request payload."""
+
+    def __init__(self, request_id: str, payload: np.ndarray) -> None:
+        if not request_id:
+            raise ValueError("request_id must be non-empty")
+        payload = np.asarray(payload, dtype=np.float64)
+        if payload.size == 0:
+            raise ValueError("payload must be non-empty")
+        self.request_id = request_id
+        self.payload = payload
+
+    def nbytes(self) -> int:
+        return int(self.payload.nbytes)
+
+
+class ModelRecord:
+    """A registered model with version and callable."""
+
+    def __init__(self, name: str, version: str, fn) -> None:
+        if not name or not version:
+            raise ValueError("name and version must be non-empty")
+        if not callable(fn):
+            raise TypeError("fn must be callable")
+        self.name = name
+        self.version = version
+        self.fn = fn
+        self.calls = 0
+
+    def invoke(self, payload: np.ndarray) -> np.ndarray:
+        result = self.fn(payload)
+        self.calls += 1
+        return np.asarray(result)
+
+
+class ServeRegistry:
+    """Registry with versioned lookup and served-request statistics."""
+
+    def __init__(self) -> None:
+        self._models: dict = {}
+        self.stats = {"requests": 0, "total_latency_ms": 0.0, "total_bytes": 0}
+
+    def register(self, name: str, version: str, fn) -> ModelRecord:
+        record = ModelRecord(name, version, fn)
+        self._models[(name, version)] = record
+        return record
+
+    def get(self, name: str, version: str = "latest") -> ModelRecord:
+        if version == "latest":
+            candidates = [r for (n, _) in self._models if n == name]
+            if not candidates:
+                raise KeyError("unknown model: {}".format(name))
+            version = max(v for (n, v) in self._models if n == name)
+        key = (name, version)
+        if key not in self._models:
+            raise KeyError("unknown model: {}@{}".format(name, version))
+        return self._models[key]
+
+    def serve(self, name: str, envelope: Envelope, version: str = "latest") -> dict:
+        model = self.get(name, version)
+        start = time.perf_counter()
+        result = model.invoke(envelope.payload)
+        latency_ms = (time.perf_counter() - start) * 1000.0
+        self.stats["requests"] += 1
+        self.stats["total_latency_ms"] += latency_ms
+        self.stats["total_bytes"] += envelope.nbytes()
+        return {
+            "request_id": envelope.request_id,
+            "model": model.name,
+            "version": model.version,
+            "shape": tuple(int(d) for d in result.shape),
+            "latency_ms": latency_ms,
+        }
+
+    def summary(self) -> dict:
+        requests = self.stats["requests"]
+        return {
+            "models": len(self._models),
+            "requests": requests,
+            "avg_latency_ms": (self.stats["total_latency_ms"] / requests) if requests else 0.0,
+            "total_bytes": self.stats["total_bytes"],
+        }
+
+__all__.append("RoutingService")
+
+
+class RoutingService:
+    """Serve routing decisions: pick the cheapest expert whose capacity fits.
+
+    Experts declare a capacity and a cost. Each serve call takes a scalar
+    score, picks the cheapest sufficient expert and records per-expert
+    usage plus latency.
+    """
+
+    def __init__(self) -> None:
+        self._experts = []
+        self.stats = {"routed": 0, "rejected": 0}
+
+    def add_expert(self, name: str, capacity: float, cost: float = 1.0) -> None:
+        if not name:
+            raise ValueError("name must be non-empty")
+        if capacity <= 0 or cost < 0:
+            raise ValueError("capacity must be > 0 and cost >= 0")
+        self._experts.append({"name": name, "capacity": float(capacity),
+                              "cost": float(cost), "calls": 0})
+
+    def route(self, score: float) -> str:
+        """Cheapest expert with capacity >= score; raises ValueError if none."""
+        sufficient = [e for e in self._experts if e["capacity"] >= score]
+        if not sufficient:
+            raise ValueError("no expert can handle score {}".format(score))
+        return min(sufficient, key=lambda e: (e["cost"], e["capacity"]))["name"]
+
+    def serve(self, request_id: str, score: float) -> dict:
+        """Serve one routing decision; returns expert and latency."""
+        if not request_id:
+            raise ValueError("request_id must be non-empty")
+        start = time.perf_counter()
+        self.stats["routed"] += 1
+        try:
+            name = self.route(score)
+        except ValueError:
+            self.stats["rejected"] += 1
+            raise
+        for e in self._experts:
+            if e["name"] == name:
+                e["calls"] += 1
+        return {"request_id": request_id, "expert": name,
+                "latency_ms": (time.perf_counter() - start) * 1000.0}
+
+    def usage(self) -> dict:
+        return {e["name"]: e["calls"] for e in self._experts}
+
